@@ -51,6 +51,7 @@ from app.database import (attachment_is_visible_to_user, channel_exists, claim_a
     QUIZ_EXPERTISES, normalize_quiz_import, analyze_quiz_set, create_user_quiz_set, update_user_quiz_set, list_user_quiz_sets, submit_user_quiz_set,
     review_user_quiz_set, update_pending_user_quiz_set, assign_daily_quizzes)
 from app.quiz_ai import generate_quizzes_with_gemini, check_quiz_answer, normalize_quiz_answer
+from app.chess_manager import chess_manager
 
 CONFIG = load_config()
 configure_storage(CONFIG.data_path, CONFIG.database_limit_bytes)
@@ -1761,3 +1762,62 @@ async def websocket_endpoint(ws: WebSocket):
         _remove_client(ws)
         await broadcast_presence(); await broadcast_users()
         logger.info("Disconnected user=%s ip=%s",info.user_id,ip)
+
+@app.websocket("/ws/chess")
+async def chess_websocket_endpoint(ws: WebSocket):
+    ip = get_client_ip(ws)
+    if not websocket_origin_is_allowed(ws):
+        await ws.close(code=1008, reason="허용되지 않은 WebSocket origin입니다.")
+        return
+    user = session_user_from_token(ws.cookies.get(SESSION_COOKIE, ""))
+    if not user:
+        await ws.close(code=1008, reason="로그인이 필요합니다.")
+        return
+    await ws.accept()
+    chess_manager.register_client(ws, user)
+    await ws.send_text(json.dumps({"type": "lobby_update", "rooms": chess_manager.get_lobby_summary()}, ensure_ascii=False))
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            if len(raw) > MAX_RAW_MESSAGE_LEN:
+                await ws.close(code=1009, reason="메시지 프레임이 너무 큽니다.")
+                break
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            action = data.get("action")
+            room_id = data.get("room_id")
+
+            if action == "list_rooms":
+                await ws.send_text(json.dumps({"type": "lobby_update", "rooms": chess_manager.get_lobby_summary()}, ensure_ascii=False))
+            elif action == "create_room":
+                await chess_manager.create_room(ws, user, data.get("title", ""), data.get("time_minutes", 10))
+            elif action == "join_room" and room_id:
+                await chess_manager.join_room(ws, user, room_id, data.get("role_pref"))
+            elif action == "leave_room" and room_id:
+                await chess_manager.leave_room(ws, user, room_id)
+            elif action == "pick_role" and room_id:
+                await chess_manager.pick_role(user, room_id, data.get("role", "spectator"))
+            elif action == "start_game" and room_id:
+                await chess_manager.start_game(user, room_id)
+            elif action == "move" and room_id:
+                await chess_manager.make_move(user, room_id, data)
+            elif action == "offer_draw" and room_id:
+                await chess_manager.offer_draw(user, room_id)
+            elif action == "respond_draw" and room_id:
+                await chess_manager.respond_draw(user, room_id, bool(data.get("accept")))
+            elif action == "resign" and room_id:
+                await chess_manager.resign(user, room_id)
+            elif action == "join_queue" and room_id:
+                await chess_manager.join_match_queue(user, room_id)
+            elif action == "ping":
+                await ws.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await chess_manager.unregister_client(ws)

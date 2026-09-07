@@ -1,0 +1,181 @@
+<!-- ============================================================
+     대나무숲 멀티플레이어 체스 모달 (Chess Modal)
+     ============================================================ -->
+<div id="chess-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="chess-modal-title">
+  <div class="chess-dialog">
+    <!-- 헤더 -->
+    <div class="chess-header">
+      <div class="chess-header-left">
+        <h2 id="chess-modal-title" class="chess-header-title">♟️ 대나무숲 체스</h2>
+        <span class="chess-header-subtitle">실시간 멀티플레이어 대국 및 관전</span>
+      </div>
+      <button id="chess-modal-close" class="chess-close-btn" type="button" aria-label="체스 모달 닫기" title="닫기">✕</button>
+    </div>
+
+    <!-- 본문 컨테이너 -->
+    <div class="chess-body">
+      <!-- 1. 로비 화면 (Lobby) -->
+      <div id="chess-lobby-screen">
+        <div class="chess-lobby-header">
+          <div>
+            <h3 class="chess-lobby-title">대국실 목록</h3>
+            <span style="font-size:12px;color:var(--ch-muted);">원하는 방을 클릭하여 참가하거나 새 대국실을 개설하세요.</span>
+          </div>
+          <div class="ch-row">
+            <button id="chess-refresh-lobby-btn" class="ch-btn ch-btn-ghost small" type="button">🔄 목록 새로고침</button>
+            <button id="chess-open-create-btn" class="ch-btn ch-btn-primary small" type="button">➕ 새 방 만들기</button>
+          </div>
+        </div>
+
+        <!-- 방 생성 폼 패널 (토글) -->
+        <div id="chess-create-panel" class="chess-create-panel hidden">
+          <h3 style="margin-top:0;margin-bottom:12px;color:var(--ch-gold-soft);font-size:15px;">새 대국실 개설</h3>
+          <div class="ch-row" style="margin-bottom:12px;">
+            <div style="flex:2;min-width:200px;">
+              <label style="display:block;font-size:11.5px;color:var(--ch-muted);margin-bottom:4px;">방 제목</label>
+              <input type="text" id="chess-create-title" class="ch-input" placeholder="예: 즐거운 체스 한 판" maxlength="25" />
+            </div>
+            <div style="flex:1;min-width:120px;">
+              <label style="display:block;font-size:11.5px;color:var(--ch-muted);margin-bottom:4px;">제한 시간 (분)</label>
+              <input type="number" id="chess-create-time" class="ch-input" value="10" min="1" max="180" />
+            </div>
+          </div>
+          <div class="ch-row" style="justify-content:flex-end;">
+            <button id="chess-cancel-create-btn" class="ch-btn ch-btn-ghost small" type="button">취소</button>
+            <button id="chess-submit-create-btn" class="ch-btn ch-btn-primary small" type="button">방 생성 및 입장</button>
+          </div>
+        </div>
+
+        <!-- 방 카드 목록 그리드 -->
+        <div id="chess-room-grid" class="chess-room-grid">
+          <!-- 동적 생성 -->
+        </div>
+
+        <!-- 방 없음 안내 -->
+        <div id="chess-lobby-empty" class="chess-lobby-empty hidden">
+          <p style="margin:0 0 10px;font-size:15px;color:var(--ch-gold-soft);">현재 개설된 체스방이 없습니다.</p>
+          <p style="margin:0;font-size:13px;">[새 방 만들기] 버튼을 눌러 첫 번째 대국실을 열어보세요!</p>
+        </div>
+      </div>
+
+      <!-- 2. 게임 화면 (Game Room) -->
+      <div id="chess-game-screen" class="hidden">
+        <div class="chess-game-topbar">
+          <div class="ch-row">
+            <button id="chLeaveRoomBtn" class="ch-btn ch-btn-ghost small" type="button">← 로비로 나가기</button>
+            <span id="chGameRoomTitle" style="font-weight:700;color:var(--ch-gold-soft);font-size:15px;">대국실</span>
+          </div>
+
+          <!-- 플레이어 액션 버튼 -->
+          <div id="chPlayerActions" class="ch-row">
+            <button id="chStartGameBtn" class="ch-btn ch-btn-primary small" type="button">게임 시작</button>
+            <button id="chDrawOfferBtn" class="ch-btn ch-btn-ghost small" type="button" style="display:none;">무승부 신청</button>
+            <button id="chResignBtn" class="ch-btn ch-btn-danger small" type="button" style="display:none;">기권</button>
+            <button id="chReturnToSpecBtn" class="ch-btn ch-btn-ghost small" type="button">관전자로 이동</button>
+          </div>
+
+          <!-- 관전자 액션 버튼 -->
+          <div id="chSpectatorActions" class="ch-row hidden">
+            <button id="chApplyMatchBtn" class="ch-btn ch-btn-primary small" type="button">대국 신청 (대기열 등록)</button>
+          </div>
+        </div>
+
+        <div id="chStatusLine" class="status-line"></div>
+
+        <div class="chess-game-grid">
+          <!-- 체스판 및 가이드 영역 -->
+          <div class="board-outer">
+            <!-- 승패/시작 결과 알림 배너 -->
+            <div id="chResultBanner" class="result-banner">승리!</div>
+
+            <!-- 프로모션 선택 모달 -->
+            <div id="chPromoModal" class="ch-modal-overlay hidden">
+              <div class="ch-modal-card">
+                <h3>프로모션할 기물 선택</h3>
+                <div id="chPromoBtns" class="promo-btns"></div>
+                <button id="chPromoCloseBtn" class="ch-btn ch-btn-ghost small" type="button" style="margin-top:14px;">취소</button>
+              </div>
+            </div>
+
+            <!-- 내가 무승부 신청 후 대기 모달 -->
+            <div id="chDrawWaitModal" class="ch-modal-overlay hidden">
+              <div class="ch-modal-card">
+                <h3>⏳ 무승부 신청 대기 중</h3>
+                <p style="color:var(--ch-muted);font-size:12.5px;margin:0;">상대방의 수락/거절 결정을 기다리고 있습니다...</p>
+              </div>
+            </div>
+
+            <!-- 상대방이 무승부 제안했을 때 모달 -->
+            <div id="chDrawModal" class="ch-modal-overlay hidden">
+              <div class="ch-modal-card">
+                <h3>🤝 무승부 제안</h3>
+                <p style="color:var(--ch-muted);font-size:12.5px;margin-bottom:16px;">상대방이 무승부를 제안했습니다. 수락하시겠습니까?</p>
+                <div class="ch-row" style="justify-content:center;">
+                  <button id="chAcceptDrawBtn" class="ch-btn ch-btn-primary small" type="button">수락</button>
+                  <button id="chRejectDrawBtn" class="ch-btn ch-btn-danger small" type="button">거절</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 시계(타이머) 칩 -->
+            <div class="clocks-row">
+              <div id="chClockChipWhite" class="clock-chip">
+                <span id="chClockLabelWhite" class="label">백</span>
+                <span id="chClockWhite" class="time">10:00</span>
+              </div>
+              <div id="chClockChipBlack" class="clock-chip">
+                <span id="chClockLabelBlack" class="label">흑</span>
+                <span id="chClockBlack" class="time">10:00</span>
+              </div>
+            </div>
+
+            <!-- 보드 및 랭크 라벨 -->
+            <div class="board-with-ranks">
+              <div id="chRanksCol" class="ranks-col"></div>
+              <div id="chBoardFrame" class="board-frame">
+                <div id="chBoardFreezeOverlay" class="board-freeze-overlay hidden"></div>
+                <div id="chBoard" class="board"></div>
+              </div>
+            </div>
+            <div id="chCoords" class="coords"></div>
+
+            <!-- 초보자 가이드 카드 -->
+            <div id="chGuideCardBox" class="guide-card-box">
+              <h3 id="chGuideTitle">💡 내 차례입니다!</h3>
+              <p id="chGuideDesc">움직이고 싶은 기물을 터치해 보세요. 갈 수 있는 위치가 판 위에 점으로 표시됩니다.</p>
+            </div>
+          </div>
+
+          <!-- 우측 사이드바 (기보 및 플레이어 정보) -->
+          <div>
+            <!-- 기보 기록 -->
+            <div class="ch-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <h3 style="margin:0;">기보 기록 (Move History)</h3>
+                <button id="chReturnLiveBtn" class="ch-btn ch-btn-ghost small hidden" type="button" style="padding:2px 7px;font-size:11px;">▶ 최신 수</button>
+              </div>
+              <div style="font-size:11px;color:var(--ch-muted);margin-bottom:6px;">마우스 오버 미리보기 · 클릭 시 해당 수로 복기</div>
+              <div id="chHistoryList" class="history-list">
+                <span class="placeholder-line">대국이 시작되면 기보가 기록됩니다.</span>
+              </div>
+            </div>
+
+            <!-- 현재 대국자 -->
+            <div class="ch-card">
+              <h3>현재 대국자</h3>
+              <div id="chPlayersBox" class="players"></div>
+            </div>
+
+            <!-- 관전자 & 대기열 -->
+            <div class="ch-card">
+              <h3>관전자 & 대기열</h3>
+              <div id="chSpectatorsBox" class="spec-list">
+                <span class="placeholder-line">관전자가 없습니다.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

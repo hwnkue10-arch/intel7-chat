@@ -35,6 +35,7 @@ import {
   refreshQuizSidebarCounts,
   handleLeaderboardInvalidated,
 } from './quiz.js';
+import { initChessListeners } from './chess.js';
 import {
   openGlobalNotificationModal,
   closeGlobalNotificationModal,
@@ -500,6 +501,7 @@ function initApp() {
   initChannelsListeners(switchConversation);
   initPinsListeners();
   initQuizListeners();
+  initChessListeners();
   initSearchListeners(switchConversation);
   initSidebarSections();
 

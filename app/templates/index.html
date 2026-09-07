@@ -6,7 +6,9 @@
   <title>[인텔7기] 대나무숲 - {{ service_name }}</title>
   <meta name="description" content="교실 내부 LAN 전용 실시간 채팅 서비스" />
   <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/css/chess.css" />
   <link rel="icon" type="image/png" href="/static/bamboochat-logo.png" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 </head>
 <body>
   <!-- 인증 모달 -->
@@ -23,6 +25,9 @@
 
   <!-- CBT 퀴즈 & 랭킹 학습 센터 모달 -->
   {% include 'partials/quiz_modal.html' %}
+
+  <!-- 대나무숲 체스 모달 -->
+  {% include 'partials/chess_modal.html' %}
 
   <!-- 공통 모달 (도움말, 관리자, 닉네임, 채널, 알림 설정 등) -->
   {% include 'partials/modals.html' %}
