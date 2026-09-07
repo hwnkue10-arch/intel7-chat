@@ -354,7 +354,8 @@ async def security_headers(request: Request, call_next):
         return PlainTextResponse("Invalid host",status_code=400)
     response=await call_next(request)
     response.headers["Content-Security-Policy"]=("default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-        "form-action 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:")
+        "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' ws: wss:")
     response.headers["Referrer-Policy"]="no-referrer"
     response.headers["X-Content-Type-Options"]="nosniff"
     response.headers["X-Frame-Options"]="DENY"

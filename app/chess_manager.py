@@ -181,12 +181,24 @@ class ChessManager:
         }
 
         if room["white"] and room["white"]["id"] == user["id"]:
-            room["white"] = player
+            if role_pref == "spectator" and not room["game_started"]:
+                room["white"] = None
+                room["spectators"] = [s for s in room["spectators"] if s["id"] != user["id"]]
+                room["spectators"].append(player)
+            else:
+                room["white"] = player
         elif room["black"] and room["black"]["id"] == user["id"]:
-            room["black"] = player
+            if role_pref == "spectator" and not room["game_started"]:
+                room["black"] = None
+                room["spectators"] = [s for s in room["spectators"] if s["id"] != user["id"]]
+                room["spectators"].append(player)
+            else:
+                room["black"] = player
         else:
             room["spectators"] = [s for s in room["spectators"] if s["id"] != user["id"]]
-            if role_pref == "w" and not room["white"] and not room["game_started"]:
+            if role_pref == "spectator":
+                room["spectators"].append(player)
+            elif role_pref == "w" and not room["white"] and not room["game_started"]:
                 room["white"] = player
             elif role_pref == "b" and not room["black"] and not room["game_started"]:
                 room["black"] = player
