@@ -79,6 +79,30 @@ export function initChessListeners() {
     refreshLobbyBtn.addEventListener('click', requestLobbyList);
   }
 
+  const roomGrid = $('chess-room-grid');
+  if (roomGrid) {
+    roomGrid.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-chess-action]');
+      if (!btn) return;
+      const action = btn.dataset.chessAction;
+      const roomId = btn.dataset.roomId;
+      if (action === 'join') {
+        joinRoomFromLobby(roomId, null);
+      } else if (action === 'spectate') {
+        joinRoomFromLobby(roomId, 'spectator');
+      }
+    });
+  }
+
+  const playersBox = $('chPlayersBox');
+  if (playersBox) {
+    playersBox.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-pick-role]');
+      if (!btn) return;
+      window.pickChessRole(btn.dataset.pickRole);
+    });
+  }
+
   // Game Room controls
   const leaveRoomBtn = $('chLeaveRoomBtn');
   const startGameBtn = $('chStartGameBtn');
@@ -110,14 +134,12 @@ export function openChessModal() {
   if (!modal) return;
   modal.classList.remove('hidden');
 
-  if (!window.Chess) {
-    showToast('체스 엔진을 로드하는 중입니다. 잠시 후 다시 시도해주세요.', 'warning');
-    return;
-  }
-  if (!localGame) localGame = new window.Chess();
-  if (!viewGame) viewGame = new window.Chess();
-
   ensureChessWs();
+
+  if (window.Chess) {
+    if (!localGame) localGame = new window.Chess();
+    if (!viewGame) viewGame = new window.Chess();
+  }
 }
 
 export function closeChessModal() {
@@ -174,7 +196,11 @@ function ensureChessWs() {
 function sendWs(payload) {
   if (chessWs && chessWs.readyState === WebSocket.OPEN) {
     chessWs.send(JSON.stringify(payload));
+    return true;
   }
+  showToast('체스 서버에 연결 중입니다. 잠시 후 다시 시도해주세요.', 'warning');
+  ensureChessWs();
+  return false;
 }
 
 function handleWsMessage(msg) {
@@ -333,8 +359,8 @@ function renderLobby(rooms) {
         </div>
       </div>
       <div class="chess-room-actions">
-        ${hasSeat ? `<button class="ch-btn ch-btn-primary small chess-join-btn" data-room-id="${escapeHtml(r.id)}" data-mode="play" type="button">참가하기</button>` : ''}
-        <button class="ch-btn ch-btn-ghost small chess-join-btn" data-room-id="${escapeHtml(r.id)}" data-mode="spectator" type="button">관전하기</button>
+        ${hasSeat ? `<button class="ch-btn ch-btn-primary small" data-chess-action="join" data-room-id="${r.id}" onclick="window.chessJoin('${r.id}', 'play')">참가하기</button>` : ''}
+        <button class="ch-btn ch-btn-ghost small" data-chess-action="spectate" data-room-id="${r.id}" onclick="window.chessJoin('${r.id}', 'spectator')">관전하기</button>
       </div>
     `;
     card.querySelectorAll('.chess-join-btn').forEach(button => {
@@ -365,13 +391,13 @@ function syncRoomState(room) {
 
   $('chGameRoomTitle').textContent = `${room.title} (${room.time_minutes}분)`;
 
-  if (!localGame) localGame = new window.Chess();
-  localGame.load(room.fen);
-  if (!viewGame) viewGame = new window.Chess();
-
   const history = room.move_history || [{ fen: room.fen, move: 'Start' }];
   currentHistoryIndex = history.length - 1;
-  viewGame.load(room.fen);
+
+  if (!localGame && window.Chess) localGame = new window.Chess();
+  if (localGame) localGame.load(room.fen);
+  if (!viewGame && window.Chess) viewGame = new window.Chess();
+  if (viewGame) viewGame.load(room.fen);
 
   if (room.game_started && !localGameStartedHandled && !room.result) {
     localGameStartedHandled = true;
@@ -773,14 +799,14 @@ function renderPlayersAndSpectators() {
         <span><span class="dot w"></span><b>백 (White)</b>: ${currentRoom.white ? escapeHtml(currentRoom.white.name) : '<span class="empty-seat">비어있음</span>'}</span>
         ${currentRoom.white ? `<span class="record-badge">${getStat(currentRoom.white.id)}</span>` : ''}
       </div>
-      ${canJoinWhite ? '<button class="ch-btn ch-btn-primary small chess-role-btn" data-role="w" type="button">백으로 앉기</button>' : ''}
+      ${canJoinWhite ? `<button class="ch-btn ch-btn-primary small" style="margin-top:5px;" data-pick-role="w" onclick="window.pickChessRole('w')">백으로 앉기</button>` : ''}
     </div>
     <div class="player-row">
       <div class="top">
         <span><span class="dot b"></span><b>흑 (Black)</b>: ${currentRoom.black ? escapeHtml(currentRoom.black.name) : '<span class="empty-seat">비어있음</span>'}</span>
         ${currentRoom.black ? `<span class="record-badge">${getStat(currentRoom.black.id)}</span>` : ''}
       </div>
-      ${canJoinBlack ? '<button class="ch-btn ch-btn-primary small chess-role-btn" data-role="b" type="button">흑으로 앉기</button>' : ''}
+      ${canJoinBlack ? `<button class="ch-btn ch-btn-primary small" style="margin-top:5px;" data-pick-role="b" onclick="window.pickChessRole('b')">흑으로 앉기</button>` : ''}
     </div>
   `;
 
