@@ -74,7 +74,7 @@ export function renderDms(onSwitchConv) {
       item.appendChild(muteIcon);
     }
 
-    const unreadCount = state.unreadCounts.dms[partnerId] || state.unreadCounts.dms[conv.name] || conv.unread || 0;
+    const unreadCount = state.unreadCounts.dms[partnerId] ?? state.unreadCounts.dms[conv.name] ?? conv.unread ?? 0;
     if (unreadCount > 0 && !isActive) {
       const badge = document.createElement('span');
       badge.className = 'sidebar-badge conv-unread dm-unread';

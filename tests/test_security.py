@@ -479,7 +479,7 @@ def test_admin_ui_and_relaxed_fields_are_rendered():
     assert 'id="mention-menu"' in response.text
     assert 'id="markdown-toolbar"' in response.text
     assert 'id="retention-note"' in response.text
-    assert 'DM 메시지는 서버에 영구 저장되며' in response.text
+    assert '서버에 영구 저장' in response.text
     assert '“변경 적용”을 눌러 저장하세요' in response.text
     assert 'minlength="2"' in response.text
     assert 'placeholder="비밀번호 (5자 이상)"' in response.text

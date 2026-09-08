@@ -814,7 +814,7 @@ async def api_ack_read_state(request: Request):
     user = request_user(request)
     data = await read_json_body(request)
     conv_type = str(data.get("conversation_type", "")).strip()
-    conv_id = str(data.get("conversation_id", "")).strip()
+    conv_id = str(data.get("conversation_id", "")).strip().removeprefix("dm:").removeprefix("channel:")
     last_read_id = data.get("last_read_message_id")
     if conv_type not in ("channel", "dm") or not conv_id or last_read_id is None:
         raise HTTPException(400, "유효한 대화 정보와 메시지 ID가 필요합니다.")
@@ -848,7 +848,7 @@ async def api_set_muted(request: Request):
     user = request_user(request)
     data = await read_json_body(request)
     conv_type = str(data.get("conversation_type", "")).strip()
-    conv_id = str(data.get("conversation_id", "")).strip()
+    conv_id = str(data.get("conversation_id", "")).strip().removeprefix("dm:").removeprefix("channel:")
     muted = bool(data.get("muted", True))
     if conv_type not in ("channel", "dm") or not conv_id:
         raise HTTPException(400, "유효한 대화 정보가 필요합니다.")

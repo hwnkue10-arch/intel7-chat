@@ -6,7 +6,7 @@ import { state, setMutedConversations } from './state.js';
 import { showToast } from './utils.js';
 import { updateMessageReactionsInDOM } from './reactions.js';
 import { fetchActivePinnedMessages } from './pins.js';
-import { emitAttention, updateDocumentTitle } from './notifications.js';
+import { emitAttention, updateDocumentTitle, isChatActiveAndFocused } from './notifications.js';
 import { displayNickname, renderOnlineList, getOrCreateDm, userDirectory } from './dm.js';
 
 import { getOrCreateChannel, channelsDirectory } from './channels.js';
@@ -24,6 +24,57 @@ export function setConnected(connected) {
     statusEl.className = `conn-status ${connected === true ? 'connected' : 'disconnected'}${connecting ? ' connecting' : ''}`;
     statusEl.textContent = connected === true ? '● 온라인' : (connecting ? '↻ 재연결 중' : '○ 오프라인');
   }
+}
+
+export function applyServerUnreadCounts(unreadCounts) {
+  if (!unreadCounts || typeof unreadCounts !== 'object') return 0;
+  state.unreadCounts.channels = {};
+  state.unreadCounts.dms = {};
+  let total = 0;
+  Object.entries(unreadCounts).forEach(([k, v]) => {
+    const count = Number(v) || 0;
+    if (k.startsWith('channel:')) {
+      const chanId = k.replace('channel:', '');
+      state.unreadCounts.channels[chanId] = count;
+      total += count;
+    } else if (k.startsWith('dm:')) {
+      const senderId = k.replace('dm:', '');
+      state.unreadCounts.dms[senderId] = count;
+      for (const [uname, u] of userDirectory.entries()) {
+        if (String(u.id) === String(senderId)) {
+          state.unreadCounts.dms[uname] = count;
+          break;
+        }
+      }
+      const matchingDm = state.dms.find(d => String(d.partnerUserId) === String(senderId));
+      if (matchingDm) {
+        state.unreadCounts.dms[matchingDm.name] = count;
+      }
+      total += count;
+    }
+  });
+
+  if (isChatActiveAndFocused() && state.activeRoom.id) {
+    if (state.activeRoom.type === 'channel') {
+      const currentChanCount = state.unreadCounts.channels[state.activeRoom.id] || 0;
+      if (currentChanCount > 0) {
+        total = Math.max(0, total - currentChanCount);
+        state.unreadCounts.channels[state.activeRoom.id] = 0;
+      }
+    } else if (state.activeRoom.type === 'dm') {
+      const dmPartner = state.activeRoom.id;
+      const dmPartnerId = userDirectory.get(dmPartner)?.id || state.dms.find(d => d.name === dmPartner)?.partnerUserId;
+      const currentDmCount = state.unreadCounts.dms[dmPartner] ?? (dmPartnerId ? state.unreadCounts.dms[String(dmPartnerId)] : 0) ?? 0;
+      if (currentDmCount > 0) {
+        total = Math.max(0, total - currentDmCount);
+        state.unreadCounts.dms[dmPartner] = 0;
+        if (dmPartnerId) state.unreadCounts.dms[String(dmPartnerId)] = 0;
+      }
+    }
+  }
+
+  updateDocumentTitle(total);
+  return total;
 }
 
 export function initWebSocket(callbacks = {}) {
@@ -198,20 +249,8 @@ export function initWebSocket(callbacks = {}) {
 
       case 'read_state_updated': {
         if (data.unread_counts && typeof data.unread_counts === 'object') {
-          state.unreadCounts.channels = {};
-          state.unreadCounts.dms = {};
-          let total = 0;
-          Object.entries(data.unread_counts).forEach(([k, v]) => {
-            const count = Number(v) || 0;
-            total += count;
-            if (k.startsWith('channel:')) {
-              state.unreadCounts.channels[k.replace('channel:', '')] = count;
-            } else if (k.startsWith('dm:')) {
-              state.unreadCounts.dms[k.replace('dm:', '')] = count;
-            }
-          });
-          updateDocumentTitle(total);
-          if (callbacks.onUnreadUpdated) callbacks.onUnreadUpdated();
+          applyServerUnreadCounts(data.unread_counts);
+          if (callbacks.onUnreadUpdated) callbacks.onUnreadUpdated(data.unread_counts);
         }
         break;
       }
@@ -245,10 +284,23 @@ export function initWebSocket(callbacks = {}) {
             display_name: u.display_name || u.username,
             online: Boolean(u.online),
           });
+          if (state.unreadCounts.dms[String(u.id)] !== undefined) {
+            state.unreadCounts.dms[u.username] = state.unreadCounts.dms[String(u.id)];
+          }
+        });
+        state.dms.forEach(conv => {
+          const u = userDirectory.get(conv.name);
+          if (u) {
+            conv.partnerUserId = u.id;
+            if (state.unreadCounts.dms[String(u.id)] !== undefined) {
+              state.unreadCounts.dms[conv.name] = state.unreadCounts.dms[String(u.id)];
+            }
+          }
         });
         renderOnlineList(userList, callbacks.onOpenDm);
         refreshRenderedAuthorNames();
         if (callbacks.onDmsUpdated) callbacks.onDmsUpdated();
+        if (callbacks.onUnreadUpdated) callbacks.onUnreadUpdated();
         break;
       }
 
@@ -262,22 +314,10 @@ export function initWebSocket(callbacks = {}) {
           if (callbacks.onMuteUpdated) callbacks.onMuteUpdated();
         }
         if (data.unread_counts && typeof data.unread_counts === 'object') {
-          state.unreadCounts.channels = {};
-          state.unreadCounts.dms = {};
-          let total = 0;
-          Object.entries(data.unread_counts).forEach(([k, v]) => {
-            const count = Number(v) || 0;
-            total += count;
-            if (k.startsWith('channel:')) {
-              state.unreadCounts.channels[k.replace('channel:', '')] = count;
-            } else if (k.startsWith('dm:')) {
-              state.unreadCounts.dms[k.replace('dm:', '')] = count;
-            }
-          });
-          updateDocumentTitle(total);
+          applyServerUnreadCounts(data.unread_counts);
         }
         if (callbacks.onDmsUpdated) callbacks.onDmsUpdated();
-        if (callbacks.onUnreadUpdated) callbacks.onUnreadUpdated();
+        if (callbacks.onUnreadUpdated) callbacks.onUnreadUpdated(data.unread_counts);
         break;
       }
 

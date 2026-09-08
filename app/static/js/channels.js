@@ -95,7 +95,7 @@ export function renderChannels(onSwitchConv) {
       item.appendChild(muteIcon);
     }
 
-    const unreadCount = state.unreadCounts.channels[conv.channelId] || conv.unread || 0;
+    const unreadCount = state.unreadCounts.channels[conv.channelId] ?? conv.unread ?? 0;
     if (unreadCount > 0 && !isActive) {
       const badge = document.createElement('span');
       badge.className = 'sidebar-badge conv-unread';

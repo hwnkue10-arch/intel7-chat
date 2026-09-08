@@ -7,7 +7,7 @@ import { state, setCurrentUser, setActiveRoom } from './state.js';
 import { showToast } from './utils.js';
 import { initAuthListeners, bootstrapAuth, updateNickBadge, showNicknameHint, refreshStorageWarning, showAuthModal } from './auth.js';
 import { loadChannels, renderChannels, initChannelsListeners, channelsDirectory } from './channels.js';
-import { renderDms, displayNickname, getOrCreateDm } from './dm.js';
+import { renderDms, displayNickname, getOrCreateDm, userDirectory } from './dm.js';
 import {
   loadDrafts,
   saveCurrentDraft,
@@ -26,7 +26,7 @@ import {
   replyTargets,
   pendingAttachments,
 } from './chat.js';
-import { initWebSocket, sendWebSocketMessage } from './ws.js';
+import { initWebSocket, sendWebSocketMessage, applyServerUnreadCounts } from './ws.js';
 import { initSearchListeners, showSearchHint } from './search.js';
 import { fetchActivePinnedMessages, initPinsListeners } from './pins.js';
 import {
@@ -47,6 +47,7 @@ import {
   checkDesktopNotificationContext,
   setDesktopNotificationEnabled,
   isDesktopNotificationEnabled,
+  isChatActiveAndFocused,
 } from './notifications.js';
 import { playNotificationSound, setSoundMode, setSoundVolume } from './audio.js';
 
@@ -69,12 +70,33 @@ function initTouchableViewport() {
 
 
 // --- Room Switching ---
+function clearConversationUnreadOptimistic(type, id) {
+  if (type === 'channel') {
+    state.unreadCounts.channels[id] = 0;
+    const chan = state.channels?.find?.(c => String(c.id) === String(id));
+    if (chan) chan.unread = 0;
+  } else if (type === 'dm') {
+    state.unreadCounts.dms[id] = 0;
+    const u = userDirectory.get(id);
+    if (u) state.unreadCounts.dms[String(u.id)] = 0;
+    const dmObj = state.dms?.find?.(d => d.name === id);
+    if (dmObj) {
+      dmObj.unread = 0;
+      if (dmObj.partnerUserId) state.unreadCounts.dms[String(dmObj.partnerUserId)] = 0;
+    }
+  }
+}
+
 async function acknowledgeConversation(type, id, lastReadMessageId) {
   const numericId = Number(String(lastReadMessageId || '').replace(/^(public|dm):/, ''));
   if (!Number.isInteger(numericId) || numericId <= 0) return;
 
   // Do not let a slow history request acknowledge a room the user already left.
   if (state.activeRoom.type !== type || String(state.activeRoom.id) !== String(id)) return;
+
+  clearConversationUnreadOptimistic(type, id);
+  renderChannels(switchConversation);
+  renderDms(switchConversation);
 
   try {
     const res = await fetch('/api/read-states/ack', {
@@ -87,14 +109,39 @@ async function acknowledgeConversation(type, id, lastReadMessageId) {
       }),
     });
     if (!res.ok) throw new Error(`ACK failed with status ${res.status}`);
+    const data = await res.json().catch(() => null);
+    if (data?.unread_counts) {
+      applyServerUnreadCounts(data.unread_counts);
+      renderChannels(switchConversation);
+      renderDms(switchConversation);
+    }
   } catch (err) {
     console.warn('Failed to acknowledge conversation read state.', err);
   }
 }
 
+function checkAndAckActiveConversation() {
+  if (!isChatActiveAndFocused() || !state.activeRoom.id) return;
+  const msgList = document.getElementById('message-list');
+  if (!msgList) return;
+  const msgRows = msgList.querySelectorAll('.msg-row[data-message-id]');
+  if (msgRows.length === 0) return;
+  const lastRow = msgRows[msgRows.length - 1];
+  const lastId = lastRow.dataset.messageId;
+  if (lastId) {
+    acknowledgeConversation(state.activeRoom.type, state.activeRoom.id, lastId);
+  }
+}
+
+window.addEventListener('focus', checkAndAckActiveConversation);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkAndAckActiveConversation();
+});
+
 async function switchConversation(type, id) {
   saveCurrentDraft();
   setActiveRoom(type, id);
+  clearConversationUnreadOptimistic(type, id);
 
   const chatAreaTitle = document.getElementById('chat-area-title');
   const chatAreaDesc = document.getElementById('chat-area-desc');
@@ -526,7 +573,8 @@ function initApp() {
       },
       onOpenDm: (nick) => switchConversation('dm', nick),
       onDmsUpdated: () => renderDms(switchConversation),
-      onUnreadUpdated: () => {
+      onUnreadUpdated: (counts) => {
+        if (counts) applyServerUnreadCounts(counts);
         renderChannels(switchConversation);
         renderDms(switchConversation);
       },
@@ -551,7 +599,7 @@ function initApp() {
           ? state.activeRoom.type === 'channel' && String(state.activeRoom.id) === String(message.channel_id)
           : state.activeRoom.type === 'dm'
             && [message.from_nick, message.to_nick].includes(String(state.activeRoom.id));
-        if (isActive) {
+        if (isActive && isChatActiveAndFocused()) {
           acknowledgeConversation(state.activeRoom.type, state.activeRoom.id, message.message_id);
         }
       },

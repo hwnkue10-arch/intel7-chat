@@ -166,6 +166,12 @@ export function showMessageToast({ kind, conversationId, title, body, tone = 'in
   }, 4800);
 }
 
+export function isChatActiveAndFocused() {
+  return typeof document !== 'undefined'
+    && document.visibilityState === 'visible'
+    && (typeof document.hasFocus !== 'function' || document.hasFocus());
+}
+
 export function emitAttention({
   kind = 'ordinary',
   conversationId = null,
@@ -178,7 +184,7 @@ export function emitAttention({
   if (isOwnMessage || isHistory) return;
 
   const activeConversationId = `${state.activeRoom.type}:${state.activeRoom.id}`;
-  const isCurrentActive = Boolean(conversationId && conversationId === activeConversationId);
+  const isCurrentActive = Boolean(conversationId && conversationId === activeConversationId) && isChatActiveAndFocused();
   const separator = conversationId ? conversationId.indexOf(':') : -1;
   const conversationType = separator > 0 ? conversationId.slice(0, separator) : '';
   const conversationKey = separator > 0 ? conversationId.slice(separator + 1) : '';
