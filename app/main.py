@@ -1776,6 +1776,7 @@ async def chess_websocket_endpoint(ws: WebSocket):
         return
     await ws.accept()
     chess_manager.register_client(ws, user)
+    chess_manager.start_clock_monitor()
     await ws.send_text(json.dumps({"type": "lobby_update", "rooms": chess_manager.get_lobby_summary()}, ensure_ascii=False))
 
     try:
@@ -1808,6 +1809,8 @@ async def chess_websocket_endpoint(ws: WebSocket):
                 await chess_manager.start_game(user, room_id)
             elif action == "move" and room_id:
                 await chess_manager.make_move(user, room_id, data)
+            elif action == "timeout" and room_id:
+                await chess_manager.claim_timeout(user, room_id)
             elif action == "offer_draw" and room_id:
                 await chess_manager.offer_draw(user, room_id)
             elif action == "respond_draw" and room_id:
