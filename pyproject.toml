@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "argon2-cffi==25.1.0",
+    "chess==1.11.2",
     "fastapi==0.141.1",
     "jinja2==3.1.6",
     "uvicorn[standard]==0.52.3",

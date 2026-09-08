@@ -1,0 +1,13 @@
+{
+  "server_name": "테스트",
+  "data_dir": "C:\\Users\\user\\BambooChatData",
+  "bind_host": "192.168.3.124",
+  "port": 8000,
+  "attachment_limit_bytes": 10737418240,
+  "database_limit_bytes": 3221225472,
+  "per_user_attachment_limit_bytes": 2147483648,
+  "session_hours": 12,
+  "registration_enabled": true,
+  "enrollment_code_hash": "$argon2id$v=19$m=19456,t=2,p=1$elXVZ7XAACJPqLGlMtDxGA$c8fN3WVK9bDBiKcB4HXdEk3bv15TlBltYzaJ5r7pnas",
+  "gemini_api_key": ""
+}

@@ -411,6 +411,16 @@ def _migrate_v18(conn: sqlite3.Connection) -> None:
     """Use accumulated score until a user explicitly selects an earned title."""
     conn.execute("UPDATE users SET quiz_badge_selection='score' WHERE quiz_badge_selection='auto'")
 
+def _migrate_v19(conn: sqlite3.Connection) -> None:
+    """Create persistent chess win/draw/loss totals."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS chess_player_stats (
+        user_id INTEGER PRIMARY KEY,
+        wins INTEGER NOT NULL DEFAULT 0,
+        draws INTEGER NOT NULL DEFAULT 0,
+        losses INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )""")
+
 _MIGRATIONS = [
     _migrate_v1,
     _migrate_v2,
@@ -430,6 +440,7 @@ _MIGRATIONS = [
     _migrate_v16,
     _migrate_v17,
     _migrate_v18,
+    _migrate_v19,
 ]
 
 
@@ -2585,6 +2596,26 @@ def get_user_quiz_stats(user_id: int) -> Dict[str, Any]:
         data["accuracy"] = round((correct / solved * 100), 1) if solved > 0 else 0.0
         data["badge"] = get_user_quiz_badge(user_id)
         return data
+
+
+def record_chess_result(white_id: int, black_id: int, winner: Optional[str]) -> None:
+    """Persist one completed chess result for both players."""
+    columns = {"w": ("wins", "losses"), "b": ("losses", "wins")}
+    with get_connection() as conn:
+        for user_id in (white_id, black_id):
+            conn.execute("INSERT OR IGNORE INTO chess_player_stats (user_id) VALUES (?)", (user_id,))
+        if winner in columns:
+            white_column, black_column = columns[winner]
+            conn.execute(f"UPDATE chess_player_stats SET {white_column} = {white_column} + 1 WHERE user_id = ?", (white_id,))
+            conn.execute(f"UPDATE chess_player_stats SET {black_column} = {black_column} + 1 WHERE user_id = ?", (black_id,))
+        else:
+            conn.execute("UPDATE chess_player_stats SET draws = draws + 1 WHERE user_id IN (?, ?)", (white_id, black_id))
+
+
+def get_chess_stats(user_id: int) -> Dict[str, int]:
+    with get_connection() as conn:
+        row = conn.execute("SELECT wins, draws, losses FROM chess_player_stats WHERE user_id = ?", (user_id,)).fetchone()
+    return dict(row) if row else {"wins": 0, "draws": 0, "losses": 0}
 
 
 def get_quiz_leaderboard(period: str = "weekly", limit: int = 20) -> List[Dict[str, Any]]:

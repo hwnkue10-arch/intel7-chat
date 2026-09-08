@@ -285,10 +285,27 @@
 .chess-game-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  position: relative;
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.chess-game-topbar > .ch-row:first-child {
+  position: absolute;
+  left: 0;
+}
+
+@media (max-width: 620px) {
+  .chess-game-topbar {
+    justify-content: flex-start;
+    padding-top: 42px;
+  }
+
+  .chess-game-topbar > .ch-row:first-child {
+    top: 0;
+  }
 }
 
 .chess-game-grid {
@@ -498,6 +515,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 10px;
   margin-bottom: 12px;
   flex-wrap: wrap;
 }

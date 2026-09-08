@@ -20,6 +20,9 @@ let currentHistoryIndex = 0;
 let previewHistoryIndex = null;
 let lastResultKeyHandled = null;
 let localGameStartedHandled = false;
+let roomCreationPending = false;
+let pendingRoomRequest = null;
+let lastTurnNoticeKey = null;
 
 const FILES = ['a','b','c','d','e','f','g','h'];
 const RANKS = ['8','7','6','5','4','3','2','1'];
@@ -81,7 +84,6 @@ export function initChessListeners() {
   const rejectDrawBtn = $('chRejectDrawBtn');
   const resignBtn = $('chResignBtn');
   const returnToSpecBtn = $('chReturnToSpecBtn');
-  const applyMatchBtn = $('chApplyMatchBtn');
   const promoCloseBtn = $('chPromoCloseBtn');
   const returnLiveBtn = $('chReturnLiveBtn');
 
@@ -92,7 +94,6 @@ export function initChessListeners() {
   if (rejectDrawBtn) rejectDrawBtn.addEventListener('click', () => handleRespondDraw(false));
   if (resignBtn) resignBtn.addEventListener('click', handleResign);
   if (returnToSpecBtn) returnToSpecBtn.addEventListener('click', handleReturnToSpec);
-  if (applyMatchBtn) applyMatchBtn.addEventListener('click', handleApplyQueue);
   if (promoCloseBtn) promoCloseBtn.addEventListener('click', closePromotionModal);
   if (returnLiveBtn) {
     returnLiveBtn.addEventListener('click', () => {
@@ -120,6 +121,7 @@ export function closeChessModal() {
   const modal = $('chess-modal');
   if (!modal) return;
   modal.classList.add('hidden');
+  notifyTurnIfHidden();
 }
 
 function ensureChessWs() {
@@ -132,6 +134,10 @@ function ensureChessWs() {
 
   chessWs.onopen = () => {
     requestLobbyList();
+    if (pendingRoomRequest) {
+      chessWs.send(JSON.stringify(pendingRoomRequest));
+      pendingRoomRequest = null;
+    }
     if (clockInterval) clearInterval(clockInterval);
     clockInterval = setInterval(realtimeClockTick, 200);
   };
@@ -163,10 +169,13 @@ function sendWs(payload) {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case 'lobby_update':
+      if (roomCreationPending) break;
       renderLobby(msg.rooms || []);
       break;
     case 'room_state':
+      roomCreationPending = false;
       syncRoomState(msg.room);
+      notifyTurnIfHidden();
       break;
     case 'error':
       showToast(msg.message || '오류가 발생했습니다.', 'error');
@@ -177,17 +186,26 @@ function handleWsMessage(msg) {
 }
 
 function requestLobbyList() {
-  sendWs({ action: 'list_rooms' });
+  if (chessWs && chessWs.readyState === WebSocket.OPEN) {
+    chessWs.send(JSON.stringify({ action: 'list_rooms' }));
+  }
 }
 
 function handleCreateRoom() {
   const title = ($('chess-create-title').value || '').trim();
   const timeMinutes = parseInt($('chess-create-time').value, 10) || 10;
-  sendWs({
+  const request = {
     action: 'create_room',
     title: title,
     time_minutes: timeMinutes
-  });
+  };
+  roomCreationPending = true;
+  if (chessWs && chessWs.readyState === WebSocket.OPEN) {
+    chessWs.send(JSON.stringify(request));
+  } else {
+    pendingRoomRequest = request;
+    ensureChessWs();
+  }
   $('chess-create-panel').classList.add('hidden');
   $('chess-create-title').value = '';
 }
@@ -236,11 +254,6 @@ function handleReturnToSpec() {
   sendWs({ action: 'pick_role', room_id: currentRoom.id, role: 'spectator' });
 }
 
-function handleApplyQueue() {
-  if (!currentRoom) return;
-  sendWs({ action: 'join_queue', room_id: currentRoom.id });
-  showToast('대국 신청 대기열에 등록되었습니다.', 'info');
-}
 
 function joinRoomFromLobby(roomId, rolePref) {
   sendWs({ action: 'join_room', room_id: roomId, role_pref: rolePref });
@@ -305,10 +318,15 @@ function renderLobby(rooms) {
         </div>
       </div>
       <div class="chess-room-actions">
-        ${hasSeat ? `<button class="ch-btn ch-btn-primary small" onclick="window.chessJoin('${r.id}', 'play')">참가하기</button>` : ''}
-        <button class="ch-btn ch-btn-ghost small" onclick="window.chessJoin('${r.id}', 'spectator')">관전하기</button>
+        ${hasSeat ? `<button class="ch-btn ch-btn-primary small chess-join-btn" data-room-id="${escapeHtml(r.id)}" data-mode="play" type="button">참가하기</button>` : ''}
+        <button class="ch-btn ch-btn-ghost small chess-join-btn" data-room-id="${escapeHtml(r.id)}" data-mode="spectator" type="button">관전하기</button>
       </div>
     `;
+    card.querySelectorAll('.chess-join-btn').forEach(button => {
+      button.addEventListener('click', () => {
+        joinRoomFromLobby(button.dataset.roomId, button.dataset.mode === 'play' ? null : 'spectator');
+      });
+    });
     grid.appendChild(card);
   });
 }
@@ -381,16 +399,24 @@ function updateRoleUI() {
 
   if (isPlayer) {
     $('chPlayerActions').classList.remove('hidden');
-    $('chSpectatorActions').classList.add('hidden');
   } else {
     $('chPlayerActions').classList.add('hidden');
-    $('chSpectatorActions').classList.remove('hidden');
   }
 
   $('chDrawOfferBtn').style.display = isActiveGame ? 'inline-flex' : 'none';
   $('chResignBtn').style.display = isActiveGame ? 'inline-flex' : 'none';
   $('chReturnToSpecBtn').style.display = isPlayer && isWaitingState ? 'inline-flex' : 'none';
   $('chStartGameBtn').style.display = isPlayer && isWaitingState ? 'inline-flex' : 'none';
+}
+
+function notifyTurnIfHidden() {
+  const modal = $('chess-modal');
+  if (!modal?.classList.contains('hidden') || !currentRoom || !myColor || !currentRoom.game_started || currentRoom.result) return;
+  if (currentRoom.active_turn !== myColor) return;
+  const key = `${currentRoom.id}:${currentRoom.move_history?.length || 0}:${myColor}`;
+  if (lastTurnNoticeKey === key) return;
+  lastTurnNoticeKey = key;
+  showToast('체스에서 내 차례입니다.', 'info');
 }
 
 function squareAt(visRow, visCol) {
@@ -617,6 +643,7 @@ function executeMove(from, to, promotionPiece) {
     room_id: currentRoom.id,
     from: from,
     to: to,
+    promotion: moveObj.promotion || null,
     san: moveObj.san,
     fen: localGame.fen(),
     flags: moveObj.flags,
@@ -723,16 +750,22 @@ function renderPlayersAndSpectators() {
         <span><span class="dot w"></span><b>백 (White)</b>: ${currentRoom.white ? escapeHtml(currentRoom.white.name) : '<span class="empty-seat">비어있음</span>'}</span>
         ${currentRoom.white ? `<span class="record-badge">${getStat(currentRoom.white.id)}</span>` : ''}
       </div>
-      ${canJoinWhite ? `<button class="ch-btn ch-btn-primary small" style="margin-top:5px;" onclick="window.pickChessRole('w')">백으로 앉기</button>` : ''}
+      ${canJoinWhite ? '<button class="ch-btn ch-btn-primary small chess-role-btn" data-role="w" type="button">백으로 앉기</button>' : ''}
     </div>
     <div class="player-row">
       <div class="top">
         <span><span class="dot b"></span><b>흑 (Black)</b>: ${currentRoom.black ? escapeHtml(currentRoom.black.name) : '<span class="empty-seat">비어있음</span>'}</span>
         ${currentRoom.black ? `<span class="record-badge">${getStat(currentRoom.black.id)}</span>` : ''}
       </div>
-      ${canJoinBlack ? `<button class="ch-btn ch-btn-primary small" style="margin-top:5px;" onclick="window.pickChessRole('b')">흑으로 앉기</button>` : ''}
+      ${canJoinBlack ? '<button class="ch-btn ch-btn-primary small chess-role-btn" data-role="b" type="button">흑으로 앉기</button>' : ''}
     </div>
   `;
+
+  box.querySelectorAll('.chess-role-btn').forEach(button => {
+    button.addEventListener('click', () => {
+      sendWs({ action: 'pick_role', room_id: currentRoom.id, role: button.dataset.role });
+    });
+  });
 
   const specBox = $('chSpectatorsBox');
   const specs = currentRoom.spectators || [];
@@ -877,12 +910,9 @@ function realtimeClockTick() {
 
   if ((clk.w_remain <= 0 || clk.b_remain <= 0) && !currentRoom.result) {
     const winner = clk.w_remain <= 0 ? 'b' : 'w';
-    const result = { type: 'timeout', winner: winner, desc: `${winner === 'w' ? '백' : '흑'} 시간승` };
     sendWs({
-      action: 'move',
+      action: 'timeout',
       room_id: currentRoom.id,
-      fen: localGame.fen(),
-      result: result
     });
   }
 }
