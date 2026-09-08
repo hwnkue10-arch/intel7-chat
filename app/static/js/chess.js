@@ -23,6 +23,8 @@ let localGameStartedHandled = false;
 let roomCreationPending = false;
 let pendingRoomRequest = null;
 let lastTurnNoticeKey = null;
+let serverClockOffset = 0;
+const SAVED_CHESS_ROOM_KEY = 'bamboochat_chess_room_id';
 
 const FILES = ['a','b','c','d','e','f','g','h'];
 const RANKS = ['8','7','6','5','4','3','2','1'];
@@ -41,6 +43,7 @@ const PIECE_GUIDES = {
 };
 
 const $ = id => document.getElementById(id);
+const sameUser = (left, right) => left != null && right != null && String(left) === String(right);
 
 export function initChessListeners() {
   const chessBtn = $('chess-btn');
@@ -134,6 +137,14 @@ function ensureChessWs() {
 
   chessWs.onopen = () => {
     requestLobbyList();
+    const savedRoomId = sessionStorage.getItem(SAVED_CHESS_ROOM_KEY);
+    if (savedRoomId) {
+      chessWs.send(JSON.stringify({
+        action: 'join_room',
+        room_id: savedRoomId,
+        role_pref: 'spectator'
+      }));
+    }
     if (pendingRoomRequest) {
       chessWs.send(JSON.stringify(pendingRoomRequest));
       pendingRoomRequest = null;
@@ -174,6 +185,9 @@ function handleWsMessage(msg) {
       break;
     case 'room_state':
       roomCreationPending = false;
+      if (Number.isFinite(msg.server_now)) {
+        serverClockOffset = msg.server_now - Date.now() / 1000;
+      }
       syncRoomState(msg.room);
       notifyTurnIfHidden();
       break;
@@ -218,6 +232,7 @@ function handleLeaveRoom() {
   sendWs({ action: 'leave_room', room_id: currentRoom.id });
   currentRoom = null;
   myColor = null;
+  sessionStorage.removeItem(SAVED_CHESS_ROOM_KEY);
   showLobbyScreen();
 }
 
@@ -339,11 +354,13 @@ window.chessJoin = function(roomId, mode) {
 function syncRoomState(room) {
   if (!room) return;
   currentRoom = room;
+  sessionStorage.setItem(SAVED_CHESS_ROOM_KEY, room.id);
   showGameScreen();
 
+  const previousColor = myColor;
   const myUserId = state.currentUser?.id;
-  if (room.white && room.white.id === myUserId) myColor = 'w';
-  else if (room.black && room.black.id === myUserId) myColor = 'b';
+  if (room.white && sameUser(room.white.id, myUserId)) myColor = 'w';
+  else if (room.black && sameUser(room.black.id, myUserId)) myColor = 'b';
   else myColor = null;
 
   $('chGameRoomTitle').textContent = `${room.title} (${room.time_minutes}분)`;
@@ -370,7 +387,13 @@ function syncRoomState(room) {
   }
 
   updateRoleUI();
-  buildBoardSkeleton();
+  const boardNeedsBuild = $('chBoard').children.length !== 64 || previousColor !== myColor;
+  if (boardNeedsBuild) {
+    selectedSquare = null;
+    legalTargets = [];
+    legalMoves = [];
+    buildBoardSkeleton();
+  }
   renderBoard();
   renderPlayersAndSpectators();
   renderHistoryUI();
@@ -775,9 +798,10 @@ function renderPlayersAndSpectators() {
     specBox.innerHTML = specs.map(s => {
       const qIndex = (currentRoom.match_queue || []).findIndex(q => q.id === s.id);
       const isQueued = qIndex !== -1;
+      const statText = getStat(s.id);
       return `
         <div class="spec-item">
-          <span>👁️ ${escapeHtml(s.name)} ${s.id === myUserId ? '(나)' : ''}</span>
+          <span>👁️ ${escapeHtml(s.name)} ${sameUser(s.id, myUserId) ? '(나)' : ''} <span class="record-badge">${statText}</span></span>
           ${isQueued ? `<span style="color:var(--ch-gold);font-weight:bold;">[대기 ${qIndex + 1}번]</span>` : ''}
         </div>
       `;
@@ -888,28 +912,22 @@ function realtimeClockTick() {
     $('chClockBlack').textContent = formatClock(clk.b_remain);
     $('chClockChipWhite').classList.remove('active');
     $('chClockChipBlack').classList.remove('active');
-    clk.last_tick_at = Date.now() / 1000;
     return;
   }
 
-  const now = Date.now() / 1000;
-  const delta = now - clk.last_tick_at;
-  clk.last_tick_at = now;
-
+  const now = Date.now() / 1000 + serverClockOffset;
+  const whiteDeadline = typeof clk.w_deadline === 'number' ? clk.w_deadline : null;
+  const blackDeadline = typeof clk.b_deadline === 'number' ? clk.b_deadline : null;
+  const whiteRemain = whiteDeadline !== null ? Math.max(0, whiteDeadline - now) : Math.max(0, Number(clk.w_remain) || 0);
+  const blackRemain = blackDeadline !== null ? Math.max(0, blackDeadline - now) : Math.max(0, Number(clk.b_remain) || 0);
   const currentTurn = localGame.turn();
-  if (currentTurn === 'w') {
-    clk.w_remain = Math.max(0, clk.w_remain - delta);
-  } else {
-    clk.b_remain = Math.max(0, clk.b_remain - delta);
-  }
 
-  $('chClockWhite').textContent = formatClock(clk.w_remain);
-  $('chClockBlack').textContent = formatClock(clk.b_remain);
+  $('chClockWhite').textContent = formatClock(whiteRemain);
+  $('chClockBlack').textContent = formatClock(blackRemain);
   $('chClockChipWhite').classList.toggle('active', currentTurn === 'w');
   $('chClockChipBlack').classList.toggle('active', currentTurn === 'b');
 
-  if ((clk.w_remain <= 0 || clk.b_remain <= 0) && !currentRoom.result) {
-    const winner = clk.w_remain <= 0 ? 'b' : 'w';
+  if ((whiteRemain <= 0 || blackRemain <= 0) && !currentRoom.result) {
     sendWs({
       action: 'timeout',
       room_id: currentRoom.id,

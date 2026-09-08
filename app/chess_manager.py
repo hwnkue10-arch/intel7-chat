@@ -9,7 +9,7 @@ import uuid
 from typing import Dict, List, Optional, Set
 from fastapi import WebSocket
 import chess
-from app.database import get_chess_stats, record_chess_result
+from app.database import get_chess_stats, get_user_by_id, record_chess_result
 
 logger = logging.getLogger("bamboochat.chess")
 
@@ -23,6 +23,10 @@ class ChessManager:
         self.socket_user: Dict[WebSocket, dict] = {}
         self.socket_room: Dict[WebSocket, str] = {}
         self.clock_task: Optional[asyncio.Task] = None
+        self.result_reset_tasks: Dict[str, asyncio.Task] = {}
+        self.result_display_seconds = 3.0
+        self.disconnect_tasks: Dict[tuple[str, str], asyncio.Task] = {}
+        self.disconnect_grace_seconds = 5.0
 
     def start_clock_monitor(self) -> None:
         if self.clock_task is None or self.clock_task.done():
@@ -50,6 +54,12 @@ class ChessManager:
         self.socket_user[ws] = user
         self.lobby_sockets.add(ws)
 
+    @staticmethod
+    def _player_for(user: dict) -> dict:
+        current = get_user_by_id(user["id"])
+        display_name = (current or user).get("display_name") or user["username"]
+        return {"id": user["id"], "username": user["username"], "name": display_name}
+
     async def unregister_client(self, ws: WebSocket) -> None:
         user = self.socket_user.pop(ws, None)
         self.lobby_sockets.discard(ws)
@@ -57,7 +67,33 @@ class ChessManager:
         if room_id and room_id in self.room_sockets:
             self.room_sockets[room_id].discard(ws)
             if user:
-                await self.handle_disconnect_from_room(user, room_id)
+                self._schedule_disconnect(user, room_id)
+
+    def _schedule_disconnect(self, user: dict, room_id: str) -> None:
+        key = (room_id, str(user["id"]))
+        previous = self.disconnect_tasks.pop(key, None)
+        if previous and not previous.done():
+            previous.cancel()
+        self.disconnect_tasks[key] = asyncio.create_task(
+            self._handle_disconnect_after_grace(user, room_id, key)
+        )
+
+    async def _handle_disconnect_after_grace(self, user: dict, room_id: str,
+                                             key: tuple[str, str]) -> None:
+        try:
+            await asyncio.sleep(self.disconnect_grace_seconds)
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            if any(str(self.socket_user.get(ws, {}).get("id")) == key[1]
+                   for ws in self.room_sockets.get(room_id, set())):
+                return
+            await self.handle_disconnect_from_room(user, room_id)
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self.disconnect_tasks.get(key) is asyncio.current_task():
+                self.disconnect_tasks.pop(key, None)
 
     def get_lobby_summary(self) -> List[dict]:
         summary = []
@@ -99,6 +135,7 @@ class ChessManager:
 
         payload = json.dumps({
             "type": "room_state",
+            "server_now": now,
             "room": {
                 "id": room["id"],
                 "title": room["title"],
@@ -119,6 +156,8 @@ class ChessManager:
                 "clock": {
                     "w_remain": round(clock["w_remain"], 1),
                     "b_remain": round(clock["b_remain"], 1),
+                    "w_deadline": clock.get("w_deadline"),
+                    "b_deadline": clock.get("b_deadline"),
                     "last_tick_at": now,
                 },
                 "stats": room["stats"],
@@ -143,11 +182,7 @@ class ChessManager:
         except (ValueError, TypeError):
             time_minutes = 10
 
-        player = {
-            "id": user["id"],
-            "username": user["username"],
-            "name": user.get("display_name") or user["username"]
-        }
+        player = self._player_for(user)
 
         room = {
             "id": room_id,
@@ -171,6 +206,8 @@ class ChessManager:
             "clock": {
                 "w_remain": float(time_minutes * 60),
                 "b_remain": float(time_minutes * 60),
+                    "w_deadline": None,
+                    "b_deadline": None,
                 "last_tick_at": time.time(),
             },
             "stats": {},
@@ -196,15 +233,15 @@ class ChessManager:
             await ws.send_text(json.dumps({"type": "error", "message": "방이 존재하지 않습니다."}, ensure_ascii=False))
             return None
 
-        player = {
-            "id": user["id"],
-            "username": user["username"],
-            "name": user.get("display_name") or user["username"]
-        }
+        pending = self.disconnect_tasks.pop((room_id, str(user["id"])), None)
+        if pending and not pending.done():
+            pending.cancel()
 
-        if room["white"] and room["white"]["id"] == user["id"]:
+        player = self._player_for(user)
+
+        if room["white"] and str(room["white"]["id"]) == str(user["id"]):
             room["white"] = player
-        elif room["black"] and room["black"]["id"] == user["id"]:
+        elif room["black"] and str(room["black"]["id"]) == str(user["id"]):
             room["black"] = player
         else:
             room["spectators"] = [s for s in room["spectators"] if s["id"] != user["id"]]
@@ -287,7 +324,7 @@ class ChessManager:
             return
 
         user_id = user["id"]
-        player = {"id": user_id, "username": user["username"], "name": user.get("display_name") or user["username"]}
+        player = self._player_for(user)
 
         if room["white"] and str(room["white"]["id"]) == str(user_id):
             room["white"] = None
@@ -328,6 +365,8 @@ class ChessManager:
         room["clock"] = {
             "w_remain": float(mins * 60),
             "b_remain": float(mins * 60),
+            "w_deadline": time.time() + mins * 60,
+            "b_deadline": None,
             "last_tick_at": time.time(),
         }
 
@@ -341,30 +380,61 @@ class ChessManager:
             "result": result,
             "move_history": room["move_history"],
         })
-        for player in (room["white"], room["black"]):
-            if player:
-                room["spectators"] = [s for s in room["spectators"] if str(s["id"]) != str(player["id"])]
-                room["spectators"].append(player)
-        room["white"] = None
-        room["black"] = None
-        room["game_started"] = False
-        room["result"] = None
-        room["draw_offer"] = None
-        room["active_turn"] = "w"
-        room["clock"]["last_tick_at"] = time.time()
+        room_id = room["id"]
+        previous = self.result_reset_tasks.pop(room_id, None)
+        if previous and not previous.done():
+            previous.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self.result_reset_tasks[room_id] = loop.create_task(self._reset_after_result(room_id))
+
+    async def _reset_after_result(self, room_id: str) -> None:
+        try:
+            await asyncio.sleep(self.result_display_seconds)
+            room = self.rooms.get(room_id)
+            if not room or not room["result"]:
+                return
+            for player in (room["white"], room["black"]):
+                if player:
+                    room["spectators"] = [s for s in room["spectators"] if str(s["id"]) != str(player["id"])]
+                    room["spectators"].append(player)
+            room["white"] = None
+            room["black"] = None
+            room["game_started"] = False
+            room["result"] = None
+            room["draw_offer"] = None
+            room["active_turn"] = "w"
+            room["clock"]["last_tick_at"] = time.time()
+            room["clock"]["w_deadline"] = None
+            room["clock"]["b_deadline"] = None
+            await self.broadcast_room(room_id)
+            await self.broadcast_lobby()
+        finally:
+            self.result_reset_tasks.pop(room_id, None)
 
     def _refresh_clock(self, room: dict, now: float) -> None:
         if room["game_started"] and not room["result"] and room["white"] and room["black"] and not room["draw_offer"]:
-            delta = max(0.0, now - room["clock"]["last_tick_at"])
             turn = room["active_turn"]
-            room["clock"][f"{turn}_remain"] = max(0.0, room["clock"][f"{turn}_remain"] - delta)
+            deadline_key = f"{turn}_deadline"
+            deadline = room["clock"].get(deadline_key)
+            if deadline is None:
+                deadline = now + room["clock"][f"{turn}_remain"]
+                room["clock"][deadline_key] = deadline
+            room["clock"][f"{turn}_remain"] = max(0.0, deadline - now)
         room["clock"]["last_tick_at"] = now
 
-    @staticmethod
-    def _refresh_player_stats(room: dict) -> None:
-        for player in (room.get("white"), room.get("black")):
+    def _refresh_player_stats(self, room: dict) -> None:
+        for player in (room.get("white"), room.get("black"), *room.get("spectators", [])):
             if player:
                 player_id = str(player["id"])
+                try:
+                    current = get_user_by_id(int(player_id))
+                    if current:
+                        player["name"] = current.get("display_name") or current["username"]
+                except Exception:
+                    pass
                 if player_id in room["stats"]:
                     continue
                 try:
@@ -378,8 +448,8 @@ class ChessManager:
             return
 
         user_id = user["id"]
-        is_white = room["white"] and room["white"]["id"] == user_id
-        is_black = room["black"] and room["black"]["id"] == user_id
+        is_white = room["white"] and str(room["white"]["id"]) == str(user_id)
+        is_black = room["black"] and str(room["black"]["id"]) == str(user_id)
 
         if not is_white and not is_black:
             return
@@ -410,12 +480,7 @@ class ChessManager:
             return
 
         now = time.time()
-        delta = now - room["clock"]["last_tick_at"]
-        if expected_color == "w":
-            room["clock"]["w_remain"] = max(0.0, room["clock"]["w_remain"] - delta)
-        else:
-            room["clock"]["b_remain"] = max(0.0, room["clock"]["b_remain"] - delta)
-        room["clock"]["last_tick_at"] = now
+        self._refresh_clock(room, now)
 
         if room["clock"][f"{expected_color}_remain"] <= 0:
             winner = "b" if expected_color == "w" else "w"
@@ -426,6 +491,8 @@ class ChessManager:
 
         room["fen"] = board.fen()
         room["active_turn"] = "b" if expected_color == "w" else "w"
+        room["clock"][f"{expected_color}_deadline"] = None
+        room["clock"][f"{room['active_turn']}_deadline"] = now + room["clock"][f"{room['active_turn']}_remain"]
         room["last_from"] = data.get("from")
         room["last_to"] = data.get("to")
         room["last_flags"] = data.get("flags")
@@ -452,16 +519,11 @@ class ChessManager:
             return
 
         now = time.time()
-        delta = now - room["clock"]["last_tick_at"]
-        room["clock"][f"{expected_color}_remain"] = max(
-            0.0, room["clock"][f"{expected_color}_remain"] - delta
-        )
-        room["clock"]["last_tick_at"] = now
+        self._refresh_clock(room, now)
         if room["clock"][f"{expected_color}_remain"] <= 0:
             winner = "b" if expected_color == "w" else "w"
-            room["result"] = {"type": "timeout", "winner": winner,
-                              "desc": f"{'백' if winner == 'w' else '흑'} 시간승"}
-            self._record_game_stats(room, winner)
+            self._complete_game(room, {"type": "timeout", "winner": winner,
+                                       "desc": f"{'백' if winner == 'w' else '흑'} 시간승"})
         await self.broadcast_room(room_id)
 
     async def _send_error(self, user: dict, message: str) -> None:
@@ -530,6 +592,8 @@ class ChessManager:
             self._complete_game(room, {"type": "draw", "winner": None, "desc": "상호 합의에 의한 무승부"})
 
         room["draw_offer"] = None
+        if not accept and room["game_started"]:
+            room["clock"][f"{room['active_turn']}_deadline"] = time.time() + room["clock"][f"{room['active_turn']}_remain"]
         await self.broadcast_room(room_id)
 
     async def resign(self, user: dict, room_id: str) -> None:

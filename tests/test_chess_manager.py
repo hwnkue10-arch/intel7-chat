@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import chess
 
@@ -65,15 +66,26 @@ def test_illegal_move_is_rejected_without_changing_room():
     assert white_ws.messages[-1] == {"type": "error", "message": "둘 수 없는 수입니다."}
 
 
+def test_move_accepts_string_user_id_from_browser_session():
+    manager, (room_id, _white, _white_ws) = make_room()
+    string_id_user = {"id": "1", "username": "white", "display_name": "White"}
+
+    asyncio.run(manager.make_move(string_id_user, room_id, {"from": "e2", "to": "e4"}))
+
+    assert manager.rooms[room_id]["active_turn"] == "b"
+
+
 def test_timeout_is_calculated_by_server_clock():
     manager, (room_id, white, _white_ws) = make_room()
     room = manager.rooms[room_id]
     room["clock"]["w_remain"] = 0.1
-    room["clock"]["last_tick_at"] -= 1
+    room["clock"]["w_deadline"] = time.time() - 1
 
     asyncio.run(manager.claim_timeout(white, room_id))
 
     assert room["result"] == {"type": "timeout", "winner": "b", "desc": "흑 시간승"}
+    assert room["white"]["id"] == 1
+    assert room["black"]["id"] == 2
 
 
 def test_spectator_join_stays_spectator_until_picking_a_seat():
@@ -109,13 +121,22 @@ def test_finished_game_automatically_moves_players_to_spectators():
 
     manager._complete_game(room, {"type": "checkmate", "winner": "w", "desc": "백 체크메이트 승리"})
 
+    assert room["white"]["id"] == 1
+    assert room["black"]["id"] == 2
+    assert room["game_started"] is True
+    assert room["result"]["type"] == "checkmate"
+    assert room["move_history"] == original_history
+    assert len(room["completed_games"]) == 1
+    assert room["completed_games"][0]["result"]["type"] == "checkmate"
+
+    async def reset():
+        await manager._reset_after_result(room_id)
+
+    asyncio.run(reset())
     assert room["white"] is None
     assert room["black"] is None
     assert room["game_started"] is False
     assert room["result"] is None
-    assert room["move_history"] == original_history
-    assert len(room["completed_games"]) == 1
-    assert room["completed_games"][0]["result"]["type"] == "checkmate"
     assert {player["id"] for player in room["spectators"]} == {1, 2}
 
 
@@ -132,3 +153,20 @@ def test_server_draw_rules_cover_insufficient_material_fifty_moves_and_repetitio
         repetition.push_uci(uci)
         repetition_history.append({"fen": repetition.fen()})
     assert ChessManager._get_game_result(repetition, repetition_history)["type"] == "draw"
+
+
+def test_disconnect_grace_preserves_player_during_refresh_reconnect():
+    manager, (room_id, white, white_ws) = make_room()
+    replacement_ws = FakeWebSocket()
+
+    async def refresh_reconnect():
+        manager.register_client(replacement_ws, white)
+        await manager.unregister_client(white_ws)
+        assert manager.rooms[room_id]["white"]["id"] == white["id"]
+        await manager.join_room(replacement_ws, white, room_id, "spectator")
+        await asyncio.sleep(0)
+
+    asyncio.run(refresh_reconnect())
+    room = manager.rooms[room_id]
+    assert room["white"]["id"] == white["id"]
+    assert room["result"] is None
