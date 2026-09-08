@@ -1,6 +1,6 @@
 # BambooChat
 
-교실 내부 LAN에서 사용하는 소규모 실시간 채팅입니다. 계정 로그인, 영구 채팅 기록, 멘션과 답장 알림, Markdown, 1:1 DM, 여러 파일 업로드와 관리자 계정 관리를 지원합니다.
+교실 내부 LAN에서 사용하는 실시간 채팅 및 학습 플랫폼입니다. 계정 로그인, 영구 채팅 기록, 멘션과 답장 알림, Markdown, 1:1 DM, 파일 업로드, AI 기반 데일리 퀴즈(CBT), 실시간 멀티플레이 체스 대국 및 관리자 계정 관리를 지원합니다.
 
 > 이 서비스는 HTTP로 동작합니다. 같은 LAN의 트래픽은 암호화되지 않으므로 다른 곳에서 쓰는 비밀번호, 개인정보, 민감한 자료를 입력하거나 공유하지 마세요. 공개 인터넷 포트 포워딩에는 사용하지 않습니다.
 
@@ -39,6 +39,18 @@ uv run --locked python run.py --close-registration
 uv run --locked python run.py --open-registration
 ```
 
+## 개발 서버 실행 (dev_run.py)
+
+코드 수정 시 자동 리로드(hot-reload)나 포트/호스트 오버라이드가 필요한 개발 환경에서는 `dev_run.py`를 사용할 수 있습니다.
+
+```powershell
+# 코드 변경 시 자동 재시작 활성화
+uv run --locked python dev_run.py --reload
+
+# 포트 및 바인드 호스트 지정
+uv run --locked python dev_run.py --port 8080 --host 0.0.0.0 --reload
+```
+
 ## 학생 접속과 가입
 
 호스트 PC에서 표시된 주소를 학생 PC 브라우저에 입력합니다.
@@ -46,6 +58,11 @@ uv run --locked python run.py --open-registration
 ```text
 http://192.168.1.42:8000
 ```
+
+> [!TIP]
+> **바인드 주소(`bind_host`) 설정 안내**
+> - **권장 설정 (`0.0.0.0`)**: `bamboochat.json`의 `bind_host`를 `"0.0.0.0"`으로 두면, 호스트 PC에서 `localhost` / `127.0.0.1`로 접속할 수 있을 뿐만 아니라 교실 내 학생 PC에서도 호스트의 LAN IP(`http://192.168.x.x:8000`)로 원활하게 동시 접속할 수 있습니다.
+> - **특정 IP 지정 시**: `bind_host`를 특정 LAN IP(예: `192.168.3.91`)로 지정한 경우, Windows 소켓 특성상 호스트 PC에서도 `localhost` 대신 해당 LAN IP 주소(`http://192.168.3.91:8000`)를 직접 브라우저에 입력해야 접속됩니다.
 
 학생은 가입 코드로 계정을 한 번 만들고 이후 자신의 아이디/비밀번호로 로그인합니다. 아이디는 2~30자, 비밀번호는 5자 이상입니다. 아이디가 파일 소유권의 기준이므로 같은 사용자가 다른 교실 PC에서 로그인해도 자신이 올린 파일을 삭제할 수 있고, 다른 계정은 삭제할 수 없습니다. 관리자는 모든 파일을 삭제할 수 있습니다.
 
@@ -105,6 +122,31 @@ http://192.168.1.42:8000
 - `Ctrl+B`, `Ctrl+I`, `Ctrl+Shift+X`, `Ctrl+K` 단축키를 지원합니다. 줄 시작에서 `-`와 Space를 누르면 bullet로 바뀌며 `Shift+Enter`로 다음 항목을 이어갑니다.
 - `?` 버튼 또는 `!도움` 명령으로 화면 내 기능 도움말을 엽니다.
 - 한 메시지에 파일을 최대 5개까지 첨부할 수 있으며 이미지 시그니처가 확인된 파일은 안전하게 미리 봅니다.
+
+## 실시간 체스 게임 (Real-time Chess)
+
+상단 헤더의 체스(`♟️`) 버튼을 통해 채팅방 내에서 학생들끼리 실시간으로 체스를 두고 관전할 수 있는 모듈입니다.
+
+- **방 생성 및 자유로운 대국**: 방 제목과 대국 제한 시간(1~180분)을 설정하여 체스방을 생성할 수 있습니다.
+- **역할 선택 및 실시간 관전 (Spectating)**: 백(White), 흑(Black) 플레이어 자리에 착석하거나 관전자로 입장하여 실시간 대국 진행 상황을 관전할 수 있습니다.
+- **공정한 FIDE 규칙 엔진**: `python-chess` 라이브러리를 기반으로 서버에서 합법적인 수(Legal Move), 폰 승급(Promotion), 앙파상(En Passant), 캐슬링(Castling)을 엄격하게 검증합니다.
+- **시간승 및 무승부 판정**:
+  - **서버 시계 기반 턴 타이머**: 클라이언트 시간이 아닌 서버 동기화 시계를 기반으로 시간초과(Timeout)를 판정합니다.
+  - **무승부 및 기권**: 상호 합의에 의한 무승부 제안/수락 및 기권(Resign) 기능을 지원합니다.
+  - **표준 무승부 자동 판정**: 3회 동형 반복(Threefold Repetition), 50수 규칙, 기물 부족(Insufficient Material) 등 FIDE 표준 무승부를 서버가 자동으로 감지하여 무승부 처리합니다.
+- **전적 통계 영구 기록**: 대국 종료 시 승/무/패 전적이 SQLite DB(`chess_player_stats`)에 영구 저장되어 방 및 프로필에 승률과 전적이 표시됩니다.
+- **연결 끊김 유예 (Grace Period)**: 페이지 새로고침이나 일시적 네트워크 단절 시 5초 동안 플레이어 자리를 안전하게 보존하여 즉각적인 몰수패를 방지합니다.
+
+## 교육용 데일리 퀴즈 & CBT 시스템 (Quiz & AI)
+
+교실 수업과 연계하여 매일 복습 퀴즈를 풀고 전공 지식을 다질 수 있는 CBT 시스템입니다.
+
+- **과목별 퀴즈 풀이**: 디지털공학, 공압/유압, 로봇 Python, 상식 등 다양한 과목의 객관식 및 단답형 문제를 제공합니다.
+- **칭호(Badge) 및 레벨 시스템**: 과목별 점수에 따라 칭호(예: `비트 찍먹` → `논리 좀 함` → `디지털 고인물`)를 획득하고 프로필 뱃지로 장착할 수 있습니다.
+- **주간/전체 리더보드**: 누적 점수를 기반으로 교실 내 랭킹을 실시간으로 집계 및 갱신합니다.
+- **Gemini AI 기반 퀴즈 자동 생성**: 관리자는 수업 자료(PDF/텍스트)를 업로드하여 Google Gemini Flash 모델을 통해 고품질 교육 퀴즈 세트를 자동으로 생성할 수 있습니다.
+- **관리자 검토 & 문제 편집 도구**: AI가 생성한 문제나 오답을 관리자 화면에서 직접 검토, 수정, 승인할 수 있습니다.
+- **유연한 정답 판정 (Normalization)**: 띄어쓰기, 대소문자, 번호 표기(예: `1`, `1번`, `AND`)를 유연하게 비교 분석하여 억울한 오답을 방지합니다.
 
 ## IP 대신 이름으로 접속
 
@@ -264,6 +306,8 @@ WSL2보다 Windows PowerShell에서 직접 실행하는 편이 LAN 접근 설정
 
 ## 테스트와 의존성 감사
 
+총 214개의 단위/통합 테스트가 포함되어 있으며, 채널, DM, 권한, 보안 헤더, CBT 퀴즈 API, 실시간 체스 엔진 및 읽음 상태 동기화를 검증합니다.
+
 ```powershell
 uv run --locked python -m pytest -q
 uv run --locked pip-audit
@@ -275,14 +319,22 @@ uv run --locked pip-audit
 
 ```text
 app/
-├─ auth.py
-├─ config.py
-├─ database.py
-├─ main.py
-├─ templates/index.html
+├─ auth.py              # Argon2id 인증, 세션 검증, 권한 관리
+├─ chess_manager.py     # 실시간 체스 룸/대국/타이머/규칙 엔진
+├─ config.py            # bamboochat.json 설정 로드 및 데이터 경로
+├─ database.py          # SQLite 영구 스키마 마이그레이션(v19) 및 쿼리
+├─ main.py              # FastAPI 서버, WebSocket 엔드포인트 (/ws, /ws/chess)
+├─ quiz_ai.py           # Gemini Flash 기반 AI 퀴즈 생성 및 정답 정규화
+├─ templates/
+│  ├─ index.html
+│  └─ partials/
+│     └─ chess_modal.html
 └─ static/
-run.py
-pyproject.toml
-uv.lock
-tests/test_security.py
+   ├─ css/ (chat.css, chess.css 등)
+   └─ js/  (main.js, ws.js, chat.js, channels.js, dm.js, quiz.js, chess.js 등)
+dev_run.py              # 개발용 자동 리로드 서버 실행기
+run.py                  # 최초 설정 마법사 및 상용 서버 엔트리포인트
+pyproject.toml          # 패키지 의존성 정의 (FastAPI, python-chess 등)
+uv.lock                 # 패키지 버전 고정 락파일
+tests/                  # 214개 테스트 모듈 (channels, chess, quiz, security 등)
 ```
